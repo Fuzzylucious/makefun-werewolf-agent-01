@@ -22,8 +22,9 @@ no unseeded randomness, no cross-game state).
   announces a found wolf to the table at its next chance to speak, naming
   seat and night; counter-claims a false seer only when its own inspection
   proves the accused innocent.
-* Doctor: protects a living seer claimant first, otherwise the most
-  trusted living seat (lowest suspicion); never repeats the previous night.
+* Doctor: protects a living seer claimant first, otherwise a proven
+  villager (someone who voted for or accused a revealed wolf), falling
+  back to the most trusted living seat; never repeats the previous night.
 * Villager: votes the most suspicious living seat when the evidence clears
   a threshold, otherwise follows a clear plurality or abstains rather than
   exile on no evidence; speaks accusations backed by the cited evidence.
@@ -150,6 +151,7 @@ def analyze(view):
     accused_me = False
     night_dead = None
     false_claim = {}
+    cleared = {s: 0 for s in living if s != me}
 
     for e in log:
         kind = e.get("kind")
@@ -232,6 +234,7 @@ def analyze(view):
                 continue
             if target in known_wolf:
                 suspicion[voter] = suspicion.get(voter, 0) - 25
+                cleared[voter] = cleared.get(voter, 0) + 1
             elif target in known_innocent:
                 suspicion[voter] = suspicion.get(voter, 0) + 20
         # Voters who agreed with a revealed wolf's vote that day.
@@ -242,10 +245,15 @@ def analyze(view):
                 suspicion[v.get("seat")] = suspicion.get(v.get("seat"), 0) + 8
 
     # Accusations: being accused by several distinct seats is suspicious;
-    # accusing a confirmed innocent is suspicious.
+    # accusing a confirmed innocent is suspicious; accusing a revealed
+    # wolf clears you (used by the doctor to pick a proven villager).
     for t, acc in accusers.items():
         if t in suspicion:
             suspicion[t] += min(18, 6 * len(acc))
+        if t in known_wolf:
+            for s in acc:
+                if s in cleared:
+                    cleared[s] += 1
     for e in log:
         if e.get("kind") == "speech":
             seat = e.get("seat")
@@ -279,6 +287,7 @@ def analyze(view):
         "known_wolf": known_wolf, "known_innocent": known_innocent,
         "partner": partner, "suspicion": suspicion,
         "seer_claims": seer_claims, "accusers": accusers,
+        "cleared": cleared,
         "votes_today": votes_today, "accused_me": accused_me,
         "night_dead": night_dead, "false_claim": false_claim,
     }
@@ -341,7 +350,12 @@ def decide_protect(game, view, options, a):
     for c in a["seer_claims"]:
         if c in options:
             return c
-    # Otherwise the most trusted living seat (lowest suspicion).
+    # Otherwise a proven villager: someone who voted for, or accused, a
+    # revealed wolf. A merely quiet seat may be a wolf lying low, so
+    # "lowest suspicion" is only the fallback.
+    cleared = {s: a["cleared"].get(s, 0) for s in options}
+    if cleared and max(cleared.values()) > 0:
+        return best(options, cleared, game, day)
     return best(options, a["suspicion"], game, day, reverse=False)
 
 
